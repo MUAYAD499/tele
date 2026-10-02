@@ -1,8 +1,11 @@
 import asyncio
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI
+from pathlib import Path
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import FileResponse
 
 from backend.app.database import engine, Base, SessionLocal
 from backend.app.config import settings
@@ -107,12 +110,61 @@ app.include_router(stats_router)
 app.include_router(settings_router)
 
 
+# -------------------------------------------------------------
+# Static Files & Frontend (dist) Hosting
+# -------------------------------------------------------------
+BASE_DIR = Path(__file__).resolve().parent.parent.parent
+DIST_DIR = BASE_DIR / "dist"
+if not DIST_DIR.exists():
+    cwd_dist = Path.cwd() / "dist"
+    if cwd_dist.exists():
+        DIST_DIR = cwd_dist
+
+# Mount Vite static assets directory if present
+assets_dir = DIST_DIR / "assets"
+if assets_dir.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+
+
 @app.get("/")
 async def root():
+    """
+    Serves the compiled React frontend dashboard (index.html) directly from dist.
+    Falls back to informative status JSON if frontend is not yet built.
+    """
+    index_file = DIST_DIR / "index.html"
+    if index_file.is_file():
+        return FileResponse(str(index_file))
     return {
         "service": "Telegram Userbot Message Filter & Forwarder",
         "status": "online",
         "version": "1.0.0",
         "matching_rule": "يكفي وجود كلمة مفتاحية واحدة فقط",
-        "api_docs": "/docs"
+        "api_docs": "/docs",
+        "message": "dist/index.html not found. Run 'npm run build' to build React frontend."
     }
+
+
+@app.get("/{full_path:path}")
+async def serve_spa_or_static(full_path: str):
+    """
+    Serves static files directly from dist or falls back to index.html for client-side routing.
+    Preserves 404 for unmatched API routes.
+    """
+    # Do not intercept API or docs routes
+    if full_path.startswith("api/") or full_path == "api":
+        raise HTTPException(status_code=404, detail="API endpoint not found")
+    if full_path in ("docs", "redoc", "openapi.json"):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Check for direct file in dist (e.g. favicon.ico, images)
+    static_file = DIST_DIR / full_path
+    if static_file.is_file():
+        return FileResponse(str(static_file))
+
+    # SPA fallback for React Router pages
+    index_file = DIST_DIR / "index.html"
+    if index_file.is_file():
+        return FileResponse(str(index_file))
+
+    raise HTTPException(status_code=404, detail="Not found")
