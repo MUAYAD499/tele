@@ -1,4 +1,5 @@
 import os
+import json
 import asyncio
 import logging
 from typing import Optional, List, Dict, Any
@@ -9,6 +10,8 @@ from telethon.tl.types import Channel, Chat, User
 from telethon.errors import (
     SessionPasswordNeededError,
     PhoneCodeInvalidError,
+    PhoneCodeExpiredError,
+    PhoneNumberInvalidError,
     PasswordHashInvalidError,
     FloodWaitError
 )
@@ -40,6 +43,106 @@ class TelegramService:
         self.phone_number: Optional[str] = None
         self.last_error: Optional[str] = None
         self.me_info: Optional[Dict[str, Any]] = None
+        self._login_state_file = os.path.join("./data", "telegram_login_state.json")
+
+    def _save_login_state(self, phone: str, phone_code_hash: str):
+        """Persists pending phone and phone_code_hash to DB and local storage to survive restarts."""
+        self.phone_number = phone
+        self.phone_code_hash = phone_code_hash
+
+        # 1. Local JSON file
+        try:
+            os.makedirs("./data", exist_ok=True)
+            with open(self._login_state_file, "w", encoding="utf-8") as f:
+                json.dump({
+                    "phone": phone,
+                    "phone_code_hash": phone_code_hash,
+                    "timestamp": datetime.utcnow().isoformat()
+                }, f)
+        except Exception as e:
+            logger.warning("Could not write telegram_login_state.json: %s", e)
+
+        # 2. SQLite DB SystemSetting table
+        try:
+            db = SessionLocal()
+            try:
+                p_set = db.query(SystemSetting).filter(SystemSetting.key == "TELEGRAM_PENDING_PHONE").first()
+                if not p_set:
+                    db.add(SystemSetting(key="TELEGRAM_PENDING_PHONE", value=phone, description="Pending Phone"))
+                else:
+                    p_set.value = phone
+
+                h_set = db.query(SystemSetting).filter(SystemSetting.key == "TELEGRAM_PENDING_HASH").first()
+                if not h_set:
+                    db.add(SystemSetting(key="TELEGRAM_PENDING_HASH", value=phone_code_hash, description="Pending Code Hash"))
+                else:
+                    h_set.value = phone_code_hash
+
+                db.commit()
+            finally:
+                db.close()
+        except Exception as e:
+            logger.warning("Could not persist login state to DB: %s", e)
+
+    def _load_login_state(self) -> tuple[Optional[str], Optional[str]]:
+        """Loads pending phone and phone_code_hash from DB or local file if in-memory is empty."""
+        phone = self.phone_number
+        phone_code_hash = self.phone_code_hash
+
+        if not phone or not phone_code_hash:
+            try:
+                db = SessionLocal()
+                try:
+                    p_set = db.query(SystemSetting).filter(SystemSetting.key == "TELEGRAM_PENDING_PHONE").first()
+                    h_set = db.query(SystemSetting).filter(SystemSetting.key == "TELEGRAM_PENDING_HASH").first()
+                    if p_set and p_set.value:
+                        phone = p_set.value
+                    if h_set and h_set.value:
+                        phone_code_hash = h_set.value
+                finally:
+                    db.close()
+            except Exception as e:
+                logger.warning("Could not load login state from DB: %s", e)
+
+        if not phone or not phone_code_hash:
+            if os.path.exists(self._login_state_file):
+                try:
+                    with open(self._login_state_file, "r", encoding="utf-8") as f:
+                        data = json.load(f)
+                        phone = phone or data.get("phone")
+                        phone_code_hash = phone_code_hash or data.get("phone_code_hash")
+                except Exception as e:
+                    logger.warning("Could not read telegram_login_state.json: %s", e)
+
+        self.phone_number = phone
+        self.phone_code_hash = phone_code_hash
+        return phone, phone_code_hash
+
+    def _clear_login_state(self):
+        """Cleans up temporary pairing credentials after successful authentication."""
+        self.phone_code_hash = None
+        if os.path.exists(self._login_state_file):
+            try:
+                os.remove(self._login_state_file)
+            except Exception:
+                pass
+        try:
+            db = SessionLocal()
+            try:
+                db.query(SystemSetting).filter(
+                    SystemSetting.key.in_(["TELEGRAM_PENDING_PHONE", "TELEGRAM_PENDING_HASH"])
+                ).delete(synchronize_session=False)
+                db.commit()
+            finally:
+                db.close()
+        except Exception:
+            pass
+
+    async def ensure_connected(self):
+        """Ensures TelegramClient is initialized and connected as a singleton."""
+        await self.initialize()
+        if not self.client.is_connected():
+            await self.client.connect()
 
     async def initialize(self):
         """Initializes the Telethon MTProto Client."""
@@ -236,28 +339,58 @@ class TelegramService:
             return {"success": False, "status": "ERROR", "error": str(e)}
 
     async def send_code_request(self, phone: str) -> Dict[str, Any]:
-        """Requests login SMS / Telegram Code for phone."""
-        await self.initialize()
-        if not self.client.is_connected():
-            await self.client.connect()
+        """Requests login SMS / Telegram Code for phone and persists the code hash."""
+        phone = phone.strip()
+        await self.ensure_connected()
 
         try:
             res = await self.client.send_code_request(phone)
-            self.phone_code_hash = res.phone_code_hash
-            self.phone_number = phone
-            return {"success": True, "message": "Code sent successfully"}
+            self._save_login_state(phone, res.phone_code_hash)
+            return {
+                "success": True,
+                "status": "code_sent",
+                "message": "تم إرسال رمز تسجيل الدخول بنجاح عبر تيليجرام.",
+                "phone": phone,
+                "phone_code_hash": res.phone_code_hash,
+                "is_code_via_app": getattr(res, "is_code_via_app", True)
+            }
         except FloodWaitError as e:
-            return {"success": False, "error": f"FloodWait: Please wait {e.seconds} seconds."}
+            msg = f"تم حظرك مؤقتاً لتكرار المحاولات (FloodWait): يرجى الانتظار {e.seconds} ثانية."
+            logger.warning(msg)
+            return {"success": False, "status": "flood_wait", "error": msg, "wait_seconds": e.seconds}
+        except PhoneNumberInvalidError:
+            return {"success": False, "status": "error", "error": "رقم الهاتف غير صالح في تيليجرام. تأكد من كتابة المفتاح الدولي كاملاً (مثال: +967xxxxxxxxx)"}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            logger.error("Failed to send telegram code: %s", e)
+            return {"success": False, "status": "error", "error": str(e)}
 
-    async def sign_in_with_code(self, code: str, password: Optional[str] = None) -> Dict[str, Any]:
-        """Completes sign-in with the received code, and optional 2FA password."""
-        if not self.phone_number or not self.phone_code_hash:
-            return {"success": False, "error": "Phone code request must be called first."}
+    async def sign_in_with_code(
+        self,
+        code: str,
+        password: Optional[str] = None,
+        phone: Optional[str] = None,
+        phone_code_hash: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Completes sign-in with received code, loading persisted hash if needed.
+        Catches SessionPasswordNeededError and returns {"status": "2fa_required", "message": "Password needed"}.
+        """
+        code = str(code).strip()
+        await self.ensure_connected()
+
+        saved_phone, saved_hash = self._load_login_state()
+        phone = phone or saved_phone
+        phone_code_hash = phone_code_hash or saved_hash
+
+        if not phone or not phone_code_hash:
+            return {
+                "success": False,
+                "status": "error",
+                "error": "لم يتم العثور على رمز التحقق المسبق (Hash). يرجى طلب إرسال الكود أولاً."
+            }
 
         try:
-            await self.client.sign_in(self.phone_number, code, phone_code_hash=self.phone_code_hash)
+            await self.client.sign_in(phone, code, phone_code_hash=phone_code_hash)
             me = await self.client.get_me()
             self.me_info = {
                 "id": me.id,
@@ -268,18 +401,48 @@ class TelegramService:
             }
             self.is_running = True
             self.status = "RUNNING"
-            return {"success": True, "status": "RUNNING", "user": self.me_info}
+            self.last_error = None
+            self._clear_login_state()
+            logger.info("Telegram signed in successfully as @%s", me.username or me.first_name)
+            return {
+                "success": True,
+                "status": "connected",
+                "message": "تم تسجيل الدخول وربط الحساب بنجاح",
+                "user": self.me_info
+            }
         except SessionPasswordNeededError:
             if password:
                 return await self.sign_in_with_password(password)
-            return {"success": False, "requires_2fa": True, "message": "2FA password is required."}
+            logger.info("2FA password required for Telegram account %s", phone)
+            return {
+                "success": False,
+                "status": "2fa_required",
+                "requires_2fa": True,
+                "message": "Password needed"
+            }
         except PhoneCodeInvalidError:
-            return {"success": False, "error": "Invalid Telegram code."}
+            return {"success": False, "status": "invalid_code", "error": "رمز التحقق المدخل غير صحيح (Invalid Code)"}
+        except PhoneCodeExpiredError:
+            return {"success": False, "status": "expired_code", "error": "رمز التحقق منتهي الصلاحية. يرجى طلب رمز جديد."}
+        except FloodWaitError as e:
+            return {"success": False, "status": "flood_wait", "error": f"تم حظرك مؤقتاً (FloodWait): يرجى الانتظار {e.seconds} ثانية."}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            # Fallback check for 2FA in exception name/message
+            if "SessionPasswordNeededError" in type(e).__name__ or "2FA" in str(e):
+                return {
+                    "success": False,
+                    "status": "2fa_required",
+                    "requires_2fa": True,
+                    "message": "Password needed"
+                }
+            logger.error("Failed to verify code: %s", e)
+            return {"success": False, "status": "error", "error": str(e)}
 
     async def sign_in_with_password(self, password: str) -> Dict[str, Any]:
-        """Completes 2FA password authentication."""
+        """Completes 2FA Cloud Password authentication."""
+        await self.ensure_connected()
+        password = str(password).strip()
+
         try:
             await self.client.sign_in(password=password)
             me = await self.client.get_me()
@@ -292,11 +455,22 @@ class TelegramService:
             }
             self.is_running = True
             self.status = "RUNNING"
-            return {"success": True, "status": "RUNNING", "user": self.me_info}
+            self.last_error = None
+            self._clear_login_state()
+            logger.info("2FA authentication successful for @%s", me.username or me.first_name)
+            return {
+                "success": True,
+                "status": "connected",
+                "message": "تم التحقق من كلمة مرور 2FA بنجاح وربط الحساب",
+                "user": self.me_info
+            }
         except PasswordHashInvalidError:
-            return {"success": False, "error": "Invalid 2FA password."}
+            return {"success": False, "status": "invalid_password", "error": "كلمة مرور التحقق بخطوتين (2FA) غير صحيحة."}
+        except FloodWaitError as e:
+            return {"success": False, "status": "flood_wait", "error": f"تم حظرك مؤقتاً (FloodWait): يرجى الانتظار {e.seconds} ثانية."}
         except Exception as e:
-            return {"success": False, "error": str(e)}
+            logger.error("Failed to verify 2FA password: %s", e)
+            return {"success": False, "status": "error", "error": str(e)}
 
     async def stop(self):
         """Stops monitoring and message processing without clearing credentials/settings."""

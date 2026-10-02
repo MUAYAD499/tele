@@ -346,6 +346,59 @@ export class RealTelegramService {
     }
   }
 
+  // Step 3: Verify 2FA Cloud Password independently
+  public async verifyPassword(password: string): Promise<{ success: boolean; account?: TelegramAccountInfo; error?: string }> {
+    if (!this.pendingClient) {
+      throw new Error("لم يتم العثور على جلسة تسجيل دخول نشطة. يرجى طلب الرمز أولاً.");
+    }
+
+    try {
+      console.log("[Telegram] Computing 2FA SRP Check for verifyPassword...");
+      const passwordSrp = await this.pendingClient.invoke(new Api.account.GetPassword());
+      const passwordSrpResult = await telegramPassword.computeCheck(passwordSrp, password);
+      const res2fa = await this.pendingClient.invoke(
+        new Api.auth.CheckPassword({
+          password: passwordSrpResult,
+        })
+      );
+      const user = (res2fa as any).user;
+
+      this.client = this.pendingClient;
+      this.pendingClient = null;
+
+      const sessionString = (this.client.session as any).save();
+      const me = (await this.client.getMe()) as any;
+      this.account = {
+        id: Number(me.id),
+        username: me.username || null,
+        first_name: me.firstName || "Telegram User",
+        last_name: me.lastName || null,
+        phone: me.phone || this.pendingPhone,
+      };
+
+      this.saveSessionString(sessionString, this.pendingPhone || "", this.account);
+      this.isConnected = true;
+      this.isRunning = true;
+      this.lastError = null;
+
+      console.log(`[Telegram] 2FA Login complete! User: @${this.account.username || this.account.first_name} (ID: ${this.account.id})`);
+      this.registerEventHandler();
+
+      return {
+        success: true,
+        account: this.account,
+      };
+    } catch (err: any) {
+      console.error("[Telegram] verifyPassword error:", err);
+      let raw = err.message || String(err);
+      let msg = raw;
+      if (raw.includes("PASSWORD_HASH_INVALID")) {
+        msg = "كلمة مرور التحقق بخطوتين (2FA) غير صحيحة.";
+      }
+      return { success: false, error: msg };
+    }
+  }
+
   // Unified Message Processing Pipeline
   public async processMessage(msg: any, knownGroupTitle?: string) {
     if (!msg || !this.isRunning) return;

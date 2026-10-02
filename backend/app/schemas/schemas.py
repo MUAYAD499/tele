@@ -149,6 +149,8 @@ class TelegramPhoneRequest(BaseModel):
 class TelegramCodeRequest(BaseModel):
     code: str
     password: Optional[str] = None
+    phone: Optional[str] = None
+    phone_code_hash: Optional[str] = None
 
 
 class TelegramPasswordRequest(BaseModel):

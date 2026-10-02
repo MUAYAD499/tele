@@ -79,11 +79,24 @@ async def request_telegram_code(payload: TelegramPhoneRequest):
 @router.post("/telegram/verify")
 @router.post("/telegram/login")
 async def verify_telegram_code(payload: TelegramCodeRequest):
-    res = await telegram_service.sign_in_with_code(payload.code, payload.password)
+    res = await telegram_service.sign_in_with_code(
+        code=payload.code,
+        password=payload.password,
+        phone=payload.phone,
+        phone_code_hash=payload.phone_code_hash
+    )
+    if res.get("status") == "2fa_required" or res.get("requires_2fa"):
+        return {
+            "status": "2fa_required",
+            "message": "Password needed",
+            "requires_2fa": True,
+            "success": False
+        }
     return res
 
 
 @router.post("/telegram/verify-2fa")
+@router.post("/telegram/verify-password")
 async def verify_telegram_2fa(payload: TelegramPasswordRequest):
     res = await telegram_service.sign_in_with_password(payload.password)
     return res

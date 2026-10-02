@@ -249,7 +249,9 @@ async function startServer() {
     try {
       const result = await telegramService.verifyCode(code.trim(), password);
       if (result.requires2FA) {
-        return res.status(400).json({
+        return res.json({
+          status: "2fa_required",
+          message: "Password needed",
           requires_2fa: true,
           error: result.error,
         });
@@ -279,6 +281,49 @@ async function startServer() {
   app.post("/api/system/telegram/login", handleVerifyCode);
   app.post("/api/telegram/verify-code", handleVerifyCode);
   app.post("/api/telegram/verify", handleVerifyCode);
+
+  const handleVerifyPassword = async (req: Request, res: Response) => {
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ error: "كلمة مرور التحقق بخطوتين مطلوبة" });
+    }
+    try {
+      const result = await telegramService.verifyPassword(password);
+      if (result.success && result.account) {
+        // Automatically sync groups from Telegram dialogs
+        telegramService.getDialogGroups().then((groups) => {
+          if (groups && groups.length > 0) {
+            db.syncMonitoredGroups(groups);
+          }
+        });
+
+        return res.json({
+          success: true,
+          status: "connected",
+          user: result.account,
+          message: "تم التحقق من كلمة مرور 2FA بنجاح",
+        });
+      }
+      return res.status(400).json({ error: result.error || "كلمة مرور 2FA غير صحيحة" });
+    } catch (err: any) {
+      console.error("Error in verify-password endpoint:", err);
+      return res.status(400).json({ error: err.message || "كلمة مرور 2FA غير صحيحة" });
+    }
+  };
+
+  app.post("/api/system/telegram/verify-2fa", handleVerifyPassword);
+  app.post("/api/system/telegram/verify-password", handleVerifyPassword);
+  app.post("/api/telegram/verify-password", handleVerifyPassword);
+  app.post("/api/telegram/verify-2fa", handleVerifyPassword);
+
+  app.get("/api/telegram/status", (_req: Request, res: Response) => {
+    res.json({
+      is_connected: telegramService.isConnected,
+      status: telegramService.isConnected && telegramService.isRunning ? "RUNNING" : "STOPPED",
+      account: telegramService.account,
+      last_error: telegramService.lastError,
+    });
+  });
 
   // Message Tester Endpoint (Arabic Normalizer & Matcher)
   app.post("/api/system/test-message", (req: Request, res: Response) => {

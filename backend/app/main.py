@@ -24,6 +24,7 @@ from backend.app.api.groups import router as groups_router
 from backend.app.api.logs import router as logs_router
 from backend.app.api.stats import router as stats_router
 from backend.app.api.settings import router as settings_router
+from backend.app.api.telegram import router as telegram_router
 
 logger = logging.getLogger("main")
 logging.basicConfig(level=getattr(logging, settings.LOG_LEVEL, logging.INFO))
@@ -108,6 +109,7 @@ app.include_router(groups_router)
 app.include_router(logs_router)
 app.include_router(stats_router)
 app.include_router(settings_router)
+app.include_router(telegram_router)
 
 
 # -------------------------------------------------------------

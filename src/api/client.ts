@@ -29,9 +29,10 @@ async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
 
   if (!res.ok) {
     const errorData = await res.json().catch(() => ({}));
-    const err: any = new Error(errorData.detail || errorData.error || `HTTP error! status: ${res.status}`);
-    if (errorData.requires_2fa) {
+    const err: any = new Error(errorData.detail || errorData.error || errorData.message || `HTTP error! status: ${res.status}`);
+    if (errorData.requires_2fa || errorData.status === "2fa_required") {
       err.requires_2fa = true;
+      err.status = "2fa_required";
     }
     throw err;
   }
@@ -58,29 +59,41 @@ export const api = {
   // Telegram Auth (Direct relative paths, resilient with alias fallback)
   requestTelegramCode: async (phone: string) => {
     try {
-      return await request<{ success: boolean; message?: string; error?: string }>("/system/telegram/request-code", {
+      return await request<{ success: boolean; phone_code_hash?: string; message?: string; error?: string }>("/telegram/send-code", {
         method: "POST",
         body: JSON.stringify({ phone }),
       });
     } catch (err: any) {
-      // Try alias endpoint if first request fails
-      return await request<{ success: boolean; message?: string; error?: string }>("/system/telegram/send-code", {
+      return await request<{ success: boolean; phone_code_hash?: string; message?: string; error?: string }>("/system/telegram/request-code", {
         method: "POST",
         body: JSON.stringify({ phone }),
       });
     }
   },
-  verifyTelegramCode: async (code: string, password?: string) => {
+  verifyTelegramCode: async (code: string, password?: string, phone?: string, phone_code_hash?: string) => {
     try {
-      return await request<{ success: boolean; status?: string; user?: any; error?: string }>("/system/telegram/verify-code", {
+      return await request<{ success: boolean; status?: string; requires_2fa?: boolean; message?: string; user?: any; error?: string }>("/telegram/verify", {
         method: "POST",
-        body: JSON.stringify({ code, password }),
+        body: JSON.stringify({ code, password, phone, phone_code_hash }),
       });
     } catch (err: any) {
-      if (err.requires_2fa) throw err;
-      return await request<{ success: boolean; status?: string; user?: any; error?: string }>("/system/telegram/verify", {
+      if (err.requires_2fa || err.status === "2fa_required") throw err;
+      return await request<{ success: boolean; status?: string; requires_2fa?: boolean; message?: string; user?: any; error?: string }>("/system/telegram/verify-code", {
         method: "POST",
-        body: JSON.stringify({ code, password }),
+        body: JSON.stringify({ code, password, phone, phone_code_hash }),
+      });
+    }
+  },
+  verifyTelegramPassword: async (password: string) => {
+    try {
+      return await request<{ success: boolean; status?: string; message?: string; user?: any; error?: string }>("/telegram/verify-password", {
+        method: "POST",
+        body: JSON.stringify({ password }),
+      });
+    } catch (err: any) {
+      return await request<{ success: boolean; status?: string; message?: string; user?: any; error?: string }>("/system/telegram/verify-password", {
+        method: "POST",
+        body: JSON.stringify({ password }),
       });
     }
   },

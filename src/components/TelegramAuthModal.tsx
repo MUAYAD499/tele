@@ -31,6 +31,7 @@ export const TelegramAuthModal: React.FC<TelegramAuthModalProps> = ({
     status?.is_connected ? "CONNECTED" : "PHONE"
   );
   const [phone, setPhone] = useState(status?.account?.phone || "");
+  const [phoneCodeHash, setPhoneCodeHash] = useState<string>("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
@@ -47,6 +48,9 @@ export const TelegramAuthModal: React.FC<TelegramAuthModalProps> = ({
     setInfoMessage(null);
     try {
       const res = await api.requestTelegramCode(phone.trim());
+      if (res.phone_code_hash) {
+        setPhoneCodeHash(res.phone_code_hash);
+      }
       setInfoMessage(res.message || "تم إرسال رمز تسجيل الدخول بنجاح.");
       setStep("CODE");
     } catch (err: any) {
@@ -62,20 +66,45 @@ export const TelegramAuthModal: React.FC<TelegramAuthModalProps> = ({
     setLoading(true);
     setError(null);
     try {
-      const res = await api.verifyTelegramCode(code.trim(), password || undefined);
-      if (res.success) {
+      const res = await api.verifyTelegramCode(code.trim(), undefined, phone.trim(), phoneCodeHash || undefined);
+      if (res.status === "2fa_required" || res.requires_2fa) {
+        setError(null);
+        setStep("2FA");
+        return;
+      }
+      if (res.success || res.status === "connected" || res.status === "RUNNING") {
         setStep("CONNECTED");
         onSuccess();
       } else {
-        setError(res.error || "رمز التحقق غير صحيح");
+        setError(res.error || res.message || "رمز التحقق غير صحيح");
       }
     } catch (err: any) {
-      if (err.requires_2fa || (err.message && err.message.includes("2FA"))) {
-        setError(err.message);
+      if (err.requires_2fa || err.status === "2fa_required" || (err.message && (err.message.includes("2FA") || err.message.includes("Password needed")))) {
+        setError(null);
         setStep("2FA");
       } else {
         setError(err.message || "رمز التحقق غير صحيح أو منتهي الصلاحية");
       }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleVerifyPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!password.trim()) return;
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await api.verifyTelegramPassword(password.trim());
+      if (res.success || res.status === "connected" || res.status === "RUNNING") {
+        setStep("CONNECTED");
+        onSuccess();
+      } else {
+        setError(res.error || res.message || "كلمة مرور التحقق بخطوتين (2FA) غير صحيحة");
+      }
+    } catch (err: any) {
+      setError(err.message || "كلمة مرور التحقق بخطوتين (2FA) غير صحيحة");
     } finally {
       setLoading(false);
     }
@@ -205,7 +234,7 @@ export const TelegramAuthModal: React.FC<TelegramAuthModalProps> = ({
 
         {/* Step 3: 2FA */}
         {step === "2FA" && (
-          <form onSubmit={handleVerifyCode} className="space-y-4">
+          <form onSubmit={handleVerifyPassword} className="space-y-4">
             <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-xs flex items-center gap-2">
               <ShieldCheck className="w-4 h-4 text-amber-400 shrink-0" />
               <span>الحساب محمي بالتحقق بخطوتين (2FA Password).</span>
