@@ -7,6 +7,7 @@ from backend.app.api.auth import get_current_user
 from backend.app.models.keyword import Keyword
 from backend.app.schemas.schemas import KeywordCreate, KeywordUpdate, KeywordResponse
 from backend.app.services.arabic_normalizer import arabic_normalizer
+from backend.app.services.telegram_client import telegram_service
 
 router = APIRouter(prefix="/api/keywords", tags=["Keywords Management"])
 
@@ -64,6 +65,7 @@ async def create_keyword(
     db.add(new_kw)
     db.commit()
     db.refresh(new_kw)
+    telegram_service.refresh_cache()
     return new_kw
 
 
@@ -90,6 +92,7 @@ async def update_keyword(
 
     db.commit()
     db.refresh(kw)
+    telegram_service.refresh_cache()
     return kw
 
 
@@ -105,4 +108,5 @@ async def delete_keyword(
 
     db.delete(kw)
     db.commit()
+    telegram_service.refresh_cache()
     return {"success": True, "message": "تم حذف الكلمة المفتاحية بنجاح"}

@@ -32,13 +32,15 @@ RUN mkdir -p /app/data
 # Environment Defaults
 ENV PYTHONUNBUFFERED=1
 ENV DATABASE_URL=sqlite:///./data/database.db
+ENV DATA_DIR=/app/data
+ENV TELEGRAM_SESSION_NAME=userbot
 ENV PORT=3000
 
 EXPOSE 3000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-  CMD curl -f http://localhost:3000/api/system/status || exit 1
+  CMD curl -f http://localhost:3000/health || exit 1
 
 # Start Server
 CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "3000"]

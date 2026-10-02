@@ -31,8 +31,8 @@ async def get_system_status(
     mode_setting = db.query(SystemSetting).filter(SystemSetting.key == "MONITOR_MODE").first()
     monitor_mode = mode_setting.value if mode_setting else settings.MONITOR_MODE
 
-    session_file = os.path.join("./data", f"{settings.TELEGRAM_SESSION_NAME}.session")
-    session_exists = os.path.exists(session_file)
+    session_file = f"{telegram_service.session_path}.session"
+    session_exists = os.path.exists(session_file) or telegram_service.me_info is not None
 
     is_connected = bool(telegram_service.client and telegram_service.client.is_connected() and telegram_service.is_running)
 

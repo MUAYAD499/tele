@@ -8,7 +8,8 @@ class Settings(BaseSettings):
     TELEGRAM_API_ID: int = int(os.getenv("TELEGRAM_API_ID", "25002565"))
     TELEGRAM_API_HASH: str = os.getenv("TELEGRAM_API_HASH", "9b6218bccd56051ca8ac7acb9eb71066")
     TELEGRAM_PHONE: Optional[str] = os.getenv("TELEGRAM_PHONE", None)
-    TELEGRAM_SESSION_NAME: str = os.getenv("TELEGRAM_SESSION_NAME", "telegram_userbot")
+    TELEGRAM_SESSION_NAME: str = os.getenv("TELEGRAM_SESSION_NAME", "userbot")
+    DATA_DIR: str = os.getenv("DATA_DIR", "./data")
 
     # Dashboard Authentication
     DASHBOARD_USERNAME: str = os.getenv("DASHBOARD_USERNAME", "admin")

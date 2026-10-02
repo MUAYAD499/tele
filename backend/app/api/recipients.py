@@ -57,6 +57,7 @@ async def create_recipient(
     db.add(new_rec)
     db.commit()
     db.refresh(new_rec)
+    telegram_service.refresh_cache()
     return new_rec
 
 
@@ -82,6 +83,7 @@ async def update_recipient(
 
     db.commit()
     db.refresh(rec)
+    telegram_service.refresh_cache()
     return rec
 
 
@@ -97,6 +99,7 @@ async def delete_recipient(
 
     db.delete(rec)
     db.commit()
+    telegram_service.refresh_cache()
     return {"success": True, "message": "تم حذف المستلم بنجاح"}
 
 

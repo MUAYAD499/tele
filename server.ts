@@ -140,10 +140,33 @@ async function startServer() {
     }
   });
 
-  // Health check
-  app.get("/api/health", (_req: Request, res: Response) => {
-    res.json({ status: "ok", time: new Date().toISOString() });
-  });
+  // Health check & Keep-Alive for UptimeRobot / Render 24/7
+  const healthHandler = (_req: Request, res: Response) => {
+    res.json({
+      status: "ok",
+      service: "telegram-userbot",
+      is_connected: telegramService.isConnected,
+      is_running: telegramService.isRunning,
+      time: new Date().toISOString()
+    });
+  };
+
+  app.get("/health", healthHandler);
+  app.head("/health", (_req: Request, res: Response) => res.status(200).end());
+  app.get("/api/health", healthHandler);
+  app.head("/api/health", (_req: Request, res: Response) => res.status(200).end());
+
+  // 24/7 Auto-Reconnect interval
+  setInterval(async () => {
+    if (telegramService.isRunning && (!telegramService.isConnected || !telegramService.client)) {
+      console.log("[Auto-Reconnect] Telegram disconnected while in RUNNING mode. Reconnecting automatically...");
+      try {
+        await telegramService.autoConnect();
+      } catch (e) {
+        console.error("[Auto-Reconnect] Failed auto-reconnect:", e);
+      }
+    }
+  }, 60000);
 
   // Auth Endpoints
   app.post("/api/auth/login", (req: Request, res: Response) => {

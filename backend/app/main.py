@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from datetime import datetime
 from contextlib import asynccontextmanager
 from pathlib import Path
 from fastapi import FastAPI, HTTPException
@@ -68,20 +69,19 @@ async def lifespan(app: FastAPI):
     seed_initial_data()
     logger.info("Database schemas and seed data ready.")
 
-    # 2. Start Forward Queue Worker
-    worker_task = asyncio.create_task(forward_worker.start())
-
-    # 3. Auto-connect Telegram if session exists
+    # 2. Auto-connect Telegram if session exists (Non-blocking)
     asyncio.create_task(telegram_service.connect_and_start())
+
+    # 3. 24/7 Auto-Reconnection & Health Keep-Alive Task (Every 60s)
+    reconnect_task = asyncio.create_task(telegram_service.start_auto_reconnect_loop())
 
     yield
 
-    # Shutdown
-    forward_worker.stop()
-    worker_task.cancel()
+    # Clean Shutdown without deleting session
+    reconnect_task.cancel()
     if telegram_service.client and telegram_service.client.is_connected():
         await telegram_service.client.disconnect()
-    logger.info("Application shutdown complete.")
+    logger.info("Application shutdown complete. Telegram session preserved.")
 
 
 app = FastAPI(
@@ -99,6 +99,25 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# -------------------------------------------------------------
+# Keep-Alive & Health Monitoring (UptimeRobot & Render 24/7)
+# -------------------------------------------------------------
+@app.get("/health")
+@app.head("/health")
+@app.get("/api/health")
+@app.head("/api/health")
+async def health_check():
+    """Ultra-fast keep-alive health check for UptimeRobot, Render, and monitoring bots."""
+    return {
+        "status": "healthy",
+        "service": "telegram-userbot",
+        "telegram_status": telegram_service.status,
+        "is_connected": bool(telegram_service.client and telegram_service.client.is_connected()),
+        "is_running": telegram_service.is_running,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
 
 # Routers
 app.include_router(auth_router)
@@ -129,6 +148,7 @@ if assets_dir.is_dir():
 
 
 @app.get("/")
+@app.head("/")
 async def root():
     """
     Serves the compiled React frontend dashboard (index.html) directly from dist.

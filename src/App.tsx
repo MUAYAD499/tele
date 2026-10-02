@@ -108,10 +108,23 @@ export function App() {
   const handleStart = async () => {
     setActionLoading(true);
     try {
-      await api.startSystem();
+      const res = await api.startSystem();
       await fetchData();
+      if (res && (!res.success || res.status === "NEEDS_AUTH")) {
+        setIsTelegramModalOpen(true);
+      }
     } catch (err: any) {
-      alert(err.message || "فشل التشغيل");
+      const msg = err.message || "";
+      if (
+        msg.includes("تسجيل الدخول") ||
+        msg.includes("NEEDS_AUTH") ||
+        msg.includes("ربط حساب") ||
+        msg.includes("authentication required")
+      ) {
+        setIsTelegramModalOpen(true);
+      } else {
+        alert(msg || "فشل التشغيل");
+      }
     } finally {
       setActionLoading(false);
     }

@@ -101,4 +101,5 @@ async def update_settings(
             s.value = payload.log_level
 
     db.commit()
+    telegram_service.refresh_cache()
     return {"success": True, "message": "تم تحديث الإعدادات بنجاح"}
