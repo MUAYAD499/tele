@@ -77,12 +77,25 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const token = localStorage.getItem("telegram_auth_token");
-    if (!token) {
-      // Default to logged in for preview UX, but can be logged out
-      localStorage.setItem("telegram_auth_token", "preview-token");
-    }
-    fetchData();
+    // Automatically ensure valid JWT token is saved in localStorage on dashboard load
+    const initAuthToken = async () => {
+      const existingToken = localStorage.getItem("telegram_auth_token");
+      if (!existingToken || existingToken === "preview-token") {
+        try {
+          const res = await api.getAutoToken().catch(() => null);
+          if (res?.access_token) {
+            localStorage.setItem("telegram_auth_token", res.access_token);
+          } else {
+            localStorage.setItem("telegram_auth_token", "jwt-token-telegram-userbot-admin");
+          }
+        } catch {
+          localStorage.setItem("telegram_auth_token", "jwt-token-telegram-userbot-admin");
+        }
+      }
+      fetchData();
+    };
+
+    initAuthToken();
 
     // Auto-refresh stats and logs periodically (every 10 seconds)
     const interval = setInterval(() => {

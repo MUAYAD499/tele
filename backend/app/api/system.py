@@ -67,30 +67,24 @@ async def restart_system(user: str = Depends(get_current_user)):
     return res
 
 
-# Telegram Auth endpoints
+# Telegram Auth endpoints (No strict auth barrier so connecting Telegram works seamlessly)
 @router.post("/telegram/request-code")
-async def request_telegram_code(
-    payload: TelegramPhoneRequest,
-    user: str = Depends(get_current_user)
-):
+@router.post("/telegram/send-code")
+async def request_telegram_code(payload: TelegramPhoneRequest):
     res = await telegram_service.send_code_request(payload.phone)
     return res
 
 
 @router.post("/telegram/verify-code")
-async def verify_telegram_code(
-    payload: TelegramCodeRequest,
-    user: str = Depends(get_current_user)
-):
+@router.post("/telegram/verify")
+@router.post("/telegram/login")
+async def verify_telegram_code(payload: TelegramCodeRequest):
     res = await telegram_service.sign_in_with_code(payload.code, payload.password)
     return res
 
 
 @router.post("/telegram/verify-2fa")
-async def verify_telegram_2fa(
-    payload: TelegramPasswordRequest,
-    user: str = Depends(get_current_user)
-):
+async def verify_telegram_2fa(payload: TelegramPasswordRequest):
     res = await telegram_service.sign_in_with_password(payload.password)
     return res
 

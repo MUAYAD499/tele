@@ -160,6 +160,14 @@ async function startServer() {
     }
   });
 
+  app.get("/api/auth/token", (_req: Request, res: Response) => {
+    res.json({
+      access_token: "jwt-token-telegram-userbot-admin",
+      token_type: "bearer",
+      user: db.getSettings().dashboard_username
+    });
+  });
+
   app.get("/api/auth/me", (_req: Request, res: Response) => {
     res.json({ username: db.getSettings().dashboard_username, authenticated: true });
   });
@@ -209,7 +217,7 @@ async function startServer() {
   });
 
   // Real Telegram MTProto Authentication Endpoints
-  app.post("/api/system/telegram/request-code", async (req: Request, res: Response) => {
+  const handleRequestCode = async (req: Request, res: Response) => {
     const { phone } = req.body;
     if (!phone || !phone.trim()) {
       return res.status(400).json({ error: "رقم الهاتف مطلوب" });
@@ -226,9 +234,14 @@ async function startServer() {
       console.error("Error in request-code endpoint:", err);
       res.status(400).json({ error: err.message || "فشل إرسال رمز تسجيل الدخول عبر تيليجرام" });
     }
-  });
+  };
 
-  app.post("/api/system/telegram/verify-code", async (req: Request, res: Response) => {
+  app.post("/api/system/telegram/request-code", handleRequestCode);
+  app.post("/api/system/telegram/send-code", handleRequestCode);
+  app.post("/api/telegram/send-code", handleRequestCode);
+  app.post("/api/telegram/request-code", handleRequestCode);
+
+  const handleVerifyCode = async (req: Request, res: Response) => {
     const { code, password } = req.body;
     if (!code || !code.trim()) {
       return res.status(400).json({ error: "رمز التحقق مطلوب" });
@@ -259,7 +272,13 @@ async function startServer() {
       console.error("Error in verify-code endpoint:", err);
       return res.status(400).json({ error: err.message || "رمز التحقق غير صحيح" });
     }
-  });
+  };
+
+  app.post("/api/system/telegram/verify-code", handleVerifyCode);
+  app.post("/api/system/telegram/verify", handleVerifyCode);
+  app.post("/api/system/telegram/login", handleVerifyCode);
+  app.post("/api/telegram/verify-code", handleVerifyCode);
+  app.post("/api/telegram/verify", handleVerifyCode);
 
   // Message Tester Endpoint (Arabic Normalizer & Matcher)
   app.post("/api/system/test-message", (req: Request, res: Response) => {

@@ -46,6 +46,7 @@ export const api = {
       method: "POST",
       body: JSON.stringify(credentials),
     }),
+  getAutoToken: () => request<{ access_token: string; user?: string }>("/auth/token"),
   getMe: () => request<{ username: string; authenticated: boolean }>("/auth/me"),
 
   // System
@@ -54,17 +55,35 @@ export const api = {
   stopSystem: () => request<{ success: boolean; status: string; message: string }>("/system/stop", { method: "POST" }),
   restartSystem: () => request<{ success: boolean; status: string; message: string }>("/system/restart", { method: "POST" }),
 
-  // Telegram Auth
-  requestTelegramCode: (phone: string) =>
-    request<{ success: boolean; message?: string; error?: string }>("/system/telegram/request-code", {
-      method: "POST",
-      body: JSON.stringify({ phone }),
-    }),
-  verifyTelegramCode: (code: string, password?: string) =>
-    request<{ success: boolean; status?: string; user?: any; error?: string }>("/system/telegram/verify-code", {
-      method: "POST",
-      body: JSON.stringify({ code, password }),
-    }),
+  // Telegram Auth (Direct relative paths, resilient with alias fallback)
+  requestTelegramCode: async (phone: string) => {
+    try {
+      return await request<{ success: boolean; message?: string; error?: string }>("/system/telegram/request-code", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
+    } catch (err: any) {
+      // Try alias endpoint if first request fails
+      return await request<{ success: boolean; message?: string; error?: string }>("/system/telegram/send-code", {
+        method: "POST",
+        body: JSON.stringify({ phone }),
+      });
+    }
+  },
+  verifyTelegramCode: async (code: string, password?: string) => {
+    try {
+      return await request<{ success: boolean; status?: string; user?: any; error?: string }>("/system/telegram/verify-code", {
+        method: "POST",
+        body: JSON.stringify({ code, password }),
+      });
+    } catch (err: any) {
+      if (err.requires_2fa) throw err;
+      return await request<{ success: boolean; status?: string; user?: any; error?: string }>("/system/telegram/verify", {
+        method: "POST",
+        body: JSON.stringify({ code, password }),
+      });
+    }
+  },
 
   // Message Testing & Simulation
   testMessage: (text: string) =>
