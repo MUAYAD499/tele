@@ -1,0 +1,17 @@
+node_modules/
+build/
+dist/
+coverage/
+.DS_Store
+*.log
+.env*
+!.env.example
+*.session
+*.session-journal
+*.db
+data/*.db
+data/*.session
+__pycache__/
+*.pyc
+.pytest_cache/
+

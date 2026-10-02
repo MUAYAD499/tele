@@ -1,0 +1,12 @@
+node_modules
+dist
+.git
+.gitignore
+*.session
+*.session-journal
+data/*.db
+data/*.session
+__pycache__
+*.pyc
+.pytest_cache
+.env

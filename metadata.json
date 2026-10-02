@@ -1,0 +1,8 @@
+{
+  "name": "Telegram Userbot Message Filter & Forwarder",
+  "description": "نظام احترافي لمراقبة مجموعات تيليجرام وفلترة الرسائل حسب الكلمات المفتاحية وإعادة توجيهها مع لوحة تحكم متكاملة",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
