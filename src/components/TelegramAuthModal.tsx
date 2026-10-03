@@ -48,8 +48,9 @@ export const TelegramAuthModal: React.FC<TelegramAuthModalProps> = ({
     setInfoMessage(null);
     try {
       const res = await api.requestTelegramCode(phone.trim());
-      if (res.phone_code_hash) {
-        setPhoneCodeHash(res.phone_code_hash);
+      const hash = res.phone_code_hash || (res as any).phoneCodeHash;
+      if (hash) {
+        setPhoneCodeHash(hash);
       }
       setInfoMessage(res.message || "تم إرسال رمز تسجيل الدخول بنجاح.");
       setStep("CODE");

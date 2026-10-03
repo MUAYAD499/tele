@@ -36,9 +36,18 @@ class TelegramService:
         self.api_id = settings.TELEGRAM_API_ID
         self.api_hash = settings.TELEGRAM_API_HASH
         
-        # Ensure persistent data directory exists
-        os.makedirs(settings.DATA_DIR, exist_ok=True)
-        self.session_path = os.path.join(settings.DATA_DIR, settings.TELEGRAM_SESSION_NAME)
+        self.data_dir = os.getenv("DATA_DIR", settings.DATA_DIR or "./data")
+        self.session_name = os.getenv("TELEGRAM_SESSION_NAME", settings.TELEGRAM_SESSION_NAME or "userbot")
+        
+        # Ensure persistent data directory exists with full permissions
+        os.makedirs(self.data_dir, exist_ok=True)
+        try:
+            os.chmod(self.data_dir, 0o777)
+        except Exception:
+            pass
+
+        self.session_path = os.path.join(self.data_dir, self.session_name)
+        self.session_file = os.path.join(self.data_dir, f"{self.session_name}.session")
         
         # Legacy session migration if needed
         self._check_legacy_session()
@@ -51,7 +60,7 @@ class TelegramService:
         self.phone_number: Optional[str] = None
         self.last_error: Optional[str] = None
         self.me_info: Optional[Dict[str, Any]] = None
-        self._login_state_file = os.path.join(settings.DATA_DIR, "telegram_login_state.json")
+        self._login_state_file = os.path.join(self.data_dir, "telegram_login_state.json")
         self._reconnect_task: Optional[asyncio.Task] = None
 
         # Zero-Latency In-Memory Cache (Microseconds matching without DB blocking)
@@ -64,8 +73,8 @@ class TelegramService:
     def _check_legacy_session(self):
         """Migrates legacy session filename to userbot.session if found."""
         try:
-            target_file = f"{self.session_path}.session"
-            legacy_file = os.path.join(settings.DATA_DIR, "telegram_userbot.session")
+            target_file = self.session_file
+            legacy_file = os.path.join(self.data_dir, "telegram_userbot.session")
             if not os.path.exists(target_file) and os.path.exists(legacy_file):
                 logger.info("Migrating legacy session %s -> %s", legacy_file, target_file)
                 shutil.copy2(legacy_file, target_file)
@@ -208,10 +217,23 @@ class TelegramService:
         """Ensures TelegramClient is initialized and connected as a singleton."""
         await self.initialize()
         if not self.client.is_connected():
-            await self.client.connect()
+            for attempt in range(1, 4):
+                try:
+                    await self.client.connect()
+                    break
+                except Exception as e:
+                    if attempt == 3:
+                        raise e
+                    await asyncio.sleep(1.0)
 
     async def initialize(self):
         """Initializes the Telethon MTProto Client with the persistent session path."""
+        os.makedirs(os.path.dirname(self.session_file), exist_ok=True)
+        try:
+            os.chmod(os.path.dirname(self.session_file), 0o777)
+        except Exception:
+            pass
+
         if not self.client:
             logger.info("Initializing Telethon client with persistent session at: %s", self.session_path)
             self.client = TelegramClient(self.session_path, self.api_id, self.api_hash)
@@ -448,16 +470,26 @@ class TelegramService:
     async def connect_and_start(self) -> Dict[str, Any]:
         """
         Starts client connection and resumes session if available.
-        Checks await client.is_user_authorized(). If authorized, starts listening immediately
-        WITHOUT asking for phone number or verification code.
+        Checks for session file first. If session exists and user is authorized,
+        starts listening immediately WITHOUT setting status to STOPPED or canceling session.
         """
         await self.initialize()
         self.refresh_cache()
         self.status = "STARTING"
 
+        has_session_file = os.path.exists(self.session_file)
+
         try:
             if not self.client.is_connected():
-                await self.client.connect()
+                # Retry connect up to 3 times to withstand transient network boot latency on Render
+                for attempt in range(1, 4):
+                    try:
+                        await self.client.connect()
+                        break
+                    except Exception as conn_err:
+                        if attempt == 3:
+                            raise conn_err
+                        await asyncio.sleep(1.5)
 
             # Persistent Session check
             if await self.client.is_user_authorized():
@@ -474,34 +506,54 @@ class TelegramService:
                 self.status = "RUNNING"
                 self.last_error = None
                 self._set_system_setting("SHOULD_RUN", "true", "24/7 desired running status")
-                logger.info("[Telegram Userbot] Session verified & active as @%s. Forwarding RUNNING.", me.username or me.first_name)
+                logger.info("[Telegram Userbot] Session verified & active as @%s. Listening RUNNING.", me.username or me.first_name)
                 return {"success": True, "status": "RUNNING", "user": self.me_info}
             else:
+                if has_session_file:
+                    logger.warning("[Telegram Userbot] Session file exists but is_user_authorized returned False.")
                 self.status = "STOPPED"
                 self.is_running = False
                 logger.info("[Telegram Userbot] No authorized session found. User authentication required.")
                 return {"success": False, "status": "NEEDS_AUTH", "message": "Phone authentication required."}
         except Exception as e:
-            self.status = "ERROR"
+            logger.error("Failed to connect Telegram client: %s", str(e), exc_info=True)
             self.last_error = str(e)
-            self.is_running = False
-            logger.error("Failed to connect Telegram client: %s", str(e))
-            return {"success": False, "status": "ERROR", "error": str(e)}
+            if has_session_file:
+                # Keep state as RECONNECTING so auto-reconnect can retry once network is ready
+                self.status = "RECONNECTING"
+                self.should_run = True
+            else:
+                self.status = "ERROR"
+                self.is_running = False
+            return {"success": False, "status": self.status, "error": str(e)}
 
     async def send_code_request(self, phone: str) -> Dict[str, Any]:
-        """Requests login SMS / Telegram Code for phone and persists the code hash."""
-        phone = phone.strip()
-        await self.ensure_connected()
+        """Requests login SMS / Telegram Code for phone and persists the code hash safely."""
+        phone = phone.strip().replace(" ", "").replace("-", "")
+        # Ensure session directory exists with full permissions
+        os.makedirs(os.path.dirname(self.session_file), exist_ok=True)
+
+        try:
+            await self.ensure_connected()
+        except Exception as conn_err:
+            logger.error("Failed to connect Telegram client in send_code_request: %s", conn_err)
+            return {
+                "success": False,
+                "status": "error",
+                "error": f"فشل الاتصال بخوادم تيليجرام: {str(conn_err)}"
+            }
 
         try:
             res = await self.client.send_code_request(phone)
             self._save_login_state(phone, res.phone_code_hash)
+            logger.info("Successfully sent code to %s (hash: %s)", phone, res.phone_code_hash)
             return {
                 "success": True,
                 "status": "code_sent",
                 "message": "تم إرسال رمز تسجيل الدخول بنجاح عبر تيليجرام.",
                 "phone": phone,
                 "phone_code_hash": res.phone_code_hash,
+                "phoneCodeHash": res.phone_code_hash,
                 "is_code_via_app": getattr(res, "is_code_via_app", True)
             }
         except FloodWaitError as e:
@@ -511,7 +563,7 @@ class TelegramService:
         except PhoneNumberInvalidError:
             return {"success": False, "status": "error", "error": "رقم الهاتف غير صالح في تيليجرام. تأكد من كتابة المفتاح الدولي كاملاً (مثال: +967xxxxxxxxx)"}
         except Exception as e:
-            logger.error("Failed to send telegram code: %s", e)
+            logger.error("Failed to send telegram code: %s", e, exc_info=True)
             return {"success": False, "status": "error", "error": str(e)}
 
     async def sign_in_with_code(

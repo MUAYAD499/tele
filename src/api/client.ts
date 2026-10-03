@@ -64,10 +64,17 @@ export const api = {
         body: JSON.stringify({ phone }),
       });
     } catch (err: any) {
-      return await request<{ success: boolean; phone_code_hash?: string; message?: string; error?: string }>("/system/telegram/request-code", {
-        method: "POST",
-        body: JSON.stringify({ phone }),
-      });
+      try {
+        return await request<{ success: boolean; phone_code_hash?: string; message?: string; error?: string }>("/auth/send-code", {
+          method: "POST",
+          body: JSON.stringify({ phone }),
+        });
+      } catch (err2: any) {
+        return await request<{ success: boolean; phone_code_hash?: string; message?: string; error?: string }>("/system/telegram/request-code", {
+          method: "POST",
+          body: JSON.stringify({ phone }),
+        });
+      }
     }
   },
   verifyTelegramCode: async (code: string, password?: string, phone?: string, phone_code_hash?: string) => {

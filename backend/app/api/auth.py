@@ -1,10 +1,18 @@
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status, Header
+from fastapi.responses import JSONResponse
 from jose import JWTError, jwt
 from typing import Optional
 
 from backend.app.config import settings
-from backend.app.schemas.schemas import LoginRequest, TokenResponse
+from backend.app.schemas.schemas import (
+    LoginRequest,
+    TokenResponse,
+    TelegramPhoneRequest,
+    TelegramCodeRequest,
+    TelegramPasswordRequest
+)
+from backend.app.services.telegram_client import telegram_service
 
 router = APIRouter(prefix="/api/auth", tags=["Authentication"])
 
@@ -68,3 +76,78 @@ async def get_auto_token():
 @router.get("/me")
 async def get_me(user: str = Depends(get_current_user)):
     return {"username": user, "authenticated": True}
+
+
+# -------------------------------------------------------------
+# Telegram Pairing Handlers on /api/auth/* (Zero HTTP 500)
+# -------------------------------------------------------------
+@router.post("/send-code")
+@router.post("/request-code")
+async def send_code_auth(payload: TelegramPhoneRequest):
+    """
+    Sends Telegram login code wrapped in try...except to prevent HTTP 500 errors.
+    Returns phone_code_hash directly to frontend so verification input is displayed immediately.
+    """
+    try:
+        phone = (payload.phone or "").strip()
+        if not phone:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": "رقم الهاتف مطلوب", "detail": "رقم الهاتف مطلوب"}
+            )
+
+        res = await telegram_service.send_code_request(phone)
+        if not res.get("success"):
+            return JSONResponse(
+                status_code=400 if res.get("status") != "flood_wait" else 429,
+                content={
+                    "success": False,
+                    "status": res.get("status", "error"),
+                    "error": res.get("error", "فشل إرسال رمز تسجيل الدخول"),
+                    "detail": res.get("error", "فشل إرسال رمز تسجيل الدخول")
+                }
+            )
+        return res
+    except Exception as e:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "status": "error", "error": str(e), "detail": str(e)}
+        )
+
+
+@router.post("/verify")
+@router.post("/verify-code")
+async def verify_code_auth(payload: TelegramCodeRequest):
+    try:
+        code = (payload.code or "").strip()
+        if not code:
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": "رمز التحقق مطلوب", "detail": "رمز التحقق مطلوب"}
+            )
+
+        res = await telegram_service.sign_in_with_code(
+            code=code,
+            password=payload.password,
+            phone=payload.phone,
+            phone_code_hash=payload.phone_code_hash
+        )
+        if res.get("status") == "2fa_required" or res.get("requires_2fa"):
+            return {
+                "status": "2fa_required",
+                "message": "Password needed",
+                "requires_2fa": True,
+                "success": False
+            }
+        if not res.get("success"):
+            return JSONResponse(
+                status_code=400,
+                content={"success": False, "error": res.get("error", "رمز التحقق غير صحيح"), "detail": res.get("error")}
+            )
+        return res
+    except Exception as e:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "status": "error", "error": str(e), "detail": str(e)}
+        )
+

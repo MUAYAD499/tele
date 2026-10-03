@@ -1,3 +1,4 @@
+import os
 import asyncio
 import logging
 from datetime import datetime
@@ -6,10 +7,26 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 
 from backend.app.database import engine, Base, SessionLocal
 from backend.app.config import settings
+
+# -------------------------------------------------------------------
+# Automatic Directory Initialization & Permission Setup (Fix HTTP 500)
+# -------------------------------------------------------------------
+DATA_DIR = os.getenv("DATA_DIR", settings.DATA_DIR or "./data")
+SESSION_NAME = os.getenv("TELEGRAM_SESSION_NAME", settings.TELEGRAM_SESSION_NAME or "userbot")
+SESSION_PATH = os.path.join(DATA_DIR, SESSION_NAME)
+
+os.makedirs(os.path.dirname(SESSION_PATH), exist_ok=True)
+os.makedirs(DATA_DIR, exist_ok=True)
+try:
+    os.chmod(DATA_DIR, 0o777)
+    os.chmod(os.path.dirname(SESSION_PATH), 0o777)
+except Exception:
+    pass
+
 from backend.app.models.keyword import Keyword
 from backend.app.models.recipient import Recipient
 from backend.app.models.settings import SystemSetting

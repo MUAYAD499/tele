@@ -263,6 +263,8 @@ async function startServer() {
   app.post("/api/system/telegram/send-code", handleRequestCode);
   app.post("/api/telegram/send-code", handleRequestCode);
   app.post("/api/telegram/request-code", handleRequestCode);
+  app.post("/api/auth/send-code", handleRequestCode);
+  app.post("/api/auth/request-code", handleRequestCode);
 
   const handleVerifyCode = async (req: Request, res: Response) => {
     const { code, password } = req.body;
@@ -304,6 +306,8 @@ async function startServer() {
   app.post("/api/system/telegram/login", handleVerifyCode);
   app.post("/api/telegram/verify-code", handleVerifyCode);
   app.post("/api/telegram/verify", handleVerifyCode);
+  app.post("/api/auth/verify-code", handleVerifyCode);
+  app.post("/api/auth/verify", handleVerifyCode);
 
   const handleVerifyPassword = async (req: Request, res: Response) => {
     const { password } = req.body;
@@ -338,6 +342,8 @@ async function startServer() {
   app.post("/api/system/telegram/verify-password", handleVerifyPassword);
   app.post("/api/telegram/verify-password", handleVerifyPassword);
   app.post("/api/telegram/verify-2fa", handleVerifyPassword);
+  app.post("/api/auth/verify-password", handleVerifyPassword);
+  app.post("/api/auth/verify-2fa", handleVerifyPassword);
 
   app.get("/api/telegram/status", (_req: Request, res: Response) => {
     res.json({

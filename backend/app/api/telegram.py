@@ -1,5 +1,6 @@
 import logging
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import JSONResponse
 from typing import Optional, Dict, Any
 
 from backend.app.schemas.schemas import (
@@ -19,17 +20,28 @@ router = APIRouter(prefix="/api/telegram", tags=["Telegram Pairing"])
 async def send_code(payload: TelegramPhoneRequest):
     """
     Sends verification code to Telegram account.
-    No dashboard auth token required to allow seamless pairing.
+    Wrapped in try...except to prevent HTTP 500 errors.
     """
-    if not payload.phone or not payload.phone.strip():
-        raise HTTPException(status_code=400, detail="رقم الهاتف مطلوب (Phone number is required)")
+    try:
+        phone = (payload.phone or "").strip()
+        if not phone:
+            return JSONResponse(status_code=400, content={"success": False, "error": "رقم الهاتف مطلوب", "detail": "رقم الهاتف مطلوب"})
 
-    res = await telegram_service.send_code_request(payload.phone.strip())
-    if not res.get("success"):
-        if res.get("status") == "flood_wait":
-            raise HTTPException(status_code=429, detail=res.get("error"))
-        raise HTTPException(status_code=400, detail=res.get("error", "فشل إرسال رمز تسجيل الدخول"))
-    return res
+        res = await telegram_service.send_code_request(phone)
+        if not res.get("success"):
+            return JSONResponse(
+                status_code=400 if res.get("status") != "flood_wait" else 429,
+                content={
+                    "success": False,
+                    "status": res.get("status", "error"),
+                    "error": res.get("error", "فشل إرسال رمز تسجيل الدخول"),
+                    "detail": res.get("error", "فشل إرسال رمز تسجيل الدخول")
+                }
+            )
+        return res
+    except Exception as e:
+        logger.error("Exception in send_code: %s", e, exc_info=True)
+        return JSONResponse(status_code=400, content={"success": False, "status": "error", "error": str(e), "detail": str(e)})
 
 
 @router.post("/verify")

@@ -1,5 +1,6 @@
 import os
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from backend.app.database import get_db
@@ -71,8 +72,14 @@ async def restart_system(user: str = Depends(get_current_user)):
 @router.post("/telegram/request-code")
 @router.post("/telegram/send-code")
 async def request_telegram_code(payload: TelegramPhoneRequest):
-    res = await telegram_service.send_code_request(payload.phone)
-    return res
+    try:
+        phone = (payload.phone or "").strip()
+        if not phone:
+            return JSONResponse(status_code=400, content={"success": False, "error": "رقم الهاتف مطلوب", "detail": "رقم الهاتف مطلوب"})
+        res = await telegram_service.send_code_request(phone)
+        return res
+    except Exception as e:
+        return JSONResponse(status_code=400, content={"success": False, "status": "error", "error": str(e), "detail": str(e)})
 
 
 @router.post("/telegram/verify-code")
